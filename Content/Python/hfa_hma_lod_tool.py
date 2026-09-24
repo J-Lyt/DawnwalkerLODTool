@@ -48,6 +48,7 @@ POLICY_HMA = "HMA"
 TARGET_LOD_COUNT = 4  # LOD0 + LOD1 + LOD2 + LOD3
 
 SCREEN_SIZE_BY_LOD = {
+    0: 1.0,
     1: 0.25,
     2: 0.11,
     3: 0.06,
@@ -887,6 +888,19 @@ def apply_policy_to_lod_info_array(
             )
         )
 
+    # LOD0 keeps its source geometry and reduction settings
+    # Explicitly write the modified struct back, as for LOD1-LOD3
+    lod_info = lod_infos[0]
+    lod_info.set_editor_property(
+        "bones_to_remove",
+        []
+    )
+    lod_info.set_editor_property(
+        "screen_size",
+        unreal.PerPlatformFloat(default=SCREEN_SIZE_BY_LOD[0])
+    )
+    lod_infos[0] = lod_info
+
     for lod_index in (
         1,
         2,
@@ -1028,7 +1042,7 @@ def verify_bones_to_remove(
     Unreal actually stored the expected array.
     """
 
-    expected_names = (
+    expected_names = [] if lod_index == 0 else (
         BONE_POLICIES[
             policy_name
         ][
@@ -1162,6 +1176,7 @@ def verify_all_lods(
     success = True
 
     for lod_index in (
+        0,
         1,
         2,
         3
@@ -1339,11 +1354,8 @@ def process_mesh(mesh):
     # --------------------------------------------------------
     # 7. Regenerate generated LODs
     #
-    # new_lod_count = 0:
-    # keep current number of LODs.
-    #
-    # generate_base_lod = False:
-    # leave LOD0 untouched.
+    # new_lod_count = 0 (keep current number of LODs)
+    # generate_base_lod = False (do not regenerate LOD0 geometry)
     # --------------------------------------------------------
 
     log(
@@ -1494,7 +1506,7 @@ def show_completion_dialog(
 # ============================================================
 # PUBLIC ENTRY POINT
 #
-# This is the function called by the Editor Utility Widget.
+# This is the function called by the Editor Utility Blueprint.
 # Importing this module does NOT automatically process assets.
 # ============================================================
 
