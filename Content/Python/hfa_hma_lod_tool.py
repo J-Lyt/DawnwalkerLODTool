@@ -45,6 +45,8 @@ import unreal
 # CONFIGURATION
 # ============================================================
 
+VERSION = "1.0"
+
 POLICY_HFA = "HFA"
 POLICY_HMA = "HMA"
 
@@ -183,7 +185,7 @@ EXPECTED_BONE_COUNTS = {
 # LOGGING
 # ============================================================
 
-LOG_PREFIX = "[Dawnwalker LOD Tool]"
+LOG_PREFIX = "[Dawnwalker LOD Tool - {}]".format(VERSION)
 
 
 def log(message):
