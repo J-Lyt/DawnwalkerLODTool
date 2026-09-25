@@ -1,3 +1,6 @@
+import json
+import math
+from pathlib import Path
 import re
 import unreal
 
@@ -12,11 +15,11 @@ import unreal
 #
 #   SK_HMA_Example_Torso_A -> Male / HMA
 #
-# If neither HFA nor HMA can be detected:
+# Policies and aliases: dawnwalker_lod_policies.json
 #
-#   YES    = Female (HFA)
-#   NO     = Male (HMA)
-#   CANCEL = Skip
+# Unknown/ambiguous names prompt for a policy:
+#   YES = Use shown policy, NO = Next policy, CANCEL = Skip
+# HFA/HMA-only ambiguity retains YES = HFA, NO = HMA, CANCEL = Skip
 #
 #
 # How to use:
@@ -26,7 +29,7 @@ import unreal
 #
 # What the tool does:
 #
-#   3. Detects HFA/HMA from asset name
+#   3. Detects the skeleton policy from asset name
 #   4. Generates LOD1-LOD3 if missing
 #   5. Populates BonesToRemove arrays
 #   6. Match screen-size thresholds
@@ -47,22 +50,10 @@ POLICY_HMA = "HMA"
 
 TARGET_LOD_COUNT = 4  # LOD0 + LOD1 + LOD2 + LOD3
 
-SCREEN_SIZE_BY_LOD = {
-    0: 1.0,
-    1: 0.25,
-    2: 0.11,
-    3: 0.06,
-}
-
-MAX_BONES_PER_VERTEX_BY_LOD = {
-    1: 8,
-    2: 8,
-    3: 4,
-}
-
 # Geometry targets are relative to LOD0 (base_lod = 0)
 # Explicit targets keep repeated runs from shifting reduction again
 GEOMETRY_RETENTION_BY_LOD = {
+    0: 1.0,  # Used only when a policy explicitly rebuilds the base LOD
     1: 1.0,
     2: 0.5,
     3: 0.25,
@@ -84,461 +75,108 @@ SHOW_COMPLETION_DIALOG = True
 
 
 # ============================================================
-# LOD1 BonesToRemove (HFA/HMA)
-# 173 bones
+# EXTERNAL POLICY DATA
 # ============================================================
 
-LOD1_BASE = """
-middle_03_in_l
-middle_02_dip_l
-middle_03_bulge_l
-middle_04_l
-middle_02_side_inn_l
-middle_02_side_out_l
-middle_02_in_l
-middle_02_pip_l
-middle_02_bulge_l
-middle_01_side_inn_l
-middle_01_side_out_l
-middle_01_palm_l
-middle_01_mcp_l
-middle_01_bulge_l
-middle_01_palmMid_l
-middle_metacarpal_slide_l
-pinky_03_in_l
-pinky_02_dip_l
-pinky_03_bulge_l
-pinky_04_l
-pinky_02_in_l
-pinky_02_pip_l
-pinky_02_bulge_l
-pinky_02_side_out_l
-pinky_02_side_inn_l
-pinky_01_side_inn_l
-pinky_01_side_out_l
-pinky_01_palm_l
-pinky_01_mcp_l
-pinky_01_bulge_l
-pinky_01_palmMid_l
-pinky_metacarpal_slide_l
-ring_03_in_l
-ring_02_dip_l
-ring_03_bulge_l
-ring_04_l
-ring_02_in_l
-ring_02_pip_l
-ring_02_bulge_l
-ring_02_side_out_l
-ring_02_side_inn_l
-ring_01_palm_l
-ring_01_mcp_l
-ring_01_bulge_l
-ring_01_side_out_l
-ring_01_side_inn_l
-ring_01_palmMid_l
-ring_metacarpal_slide_l
-thumb_03_pip_l
-thumb_03_in_l
-thumb_03_side_out_l
-thumb_03_side_inn_l
-thumb_03_bulge_l
-thumb_04_l
-thumb_02_mcp_l
-thumb_02_in_l
-thumb_02_side_out_l
-thumb_02_side_inn_l
-thumb_02_bulge_l
-thumb_01_side_out_l
-thumb_01_side_inn_l
-index_03_in_l
-index_02_dip_l
-index_03_bulge_l
-index_04_l
-index_02_side_inn_l
-index_02_side_out_l
-index_02_in_l
-index_02_pip_l
-index_02_bulge_l
-index_01_side_out_l
-index_01_side_inn_l
-index_01_palm_l
-index_01_mcp_l
-index_01_bulge_l
-index_01_palmMid_l
-index_metacarpal_slide_l
-middle_03_in_r
-middle_02_dip_r
-middle_03_bulge_r
-middle_02_side_inn_r
-middle_02_side_out_r
-middle_02_in_r
-middle_02_pip_r
-middle_02_bulge_r
-middle_01_side_inn_r
-middle_01_side_out_r
-middle_01_palm_r
-middle_01_mcp_r
-middle_01_bulge_r
-middle_01_palmMid_r
-middle_metacarpal_slide_r
-pinky_03_in_r
-pinky_02_dip_r
-pinky_03_bulge_r
-pinky_04_r
-pinky_02_in_r
-pinky_02_pip_r
-pinky_02_bulge_r
-pinky_02_side_out_r
-pinky_02_side_inn_r
-pinky_01_side_inn_r
-pinky_01_side_out_r
-pinky_01_palm_r
-pinky_01_mcp_r
-pinky_01_bulge_r
-pinky_01_palmMid_r
-pinky_metacarpal_slide_r
-ring_03_in_r
-ring_02_dip_r
-ring_03_bulge_r
-ring_04_r
-ring_02_in_r
-ring_02_pip_r
-ring_02_bulge_r
-ring_02_side_out_r
-ring_02_side_inn_r
-ring_01_palm_r
-ring_01_mcp_r
-ring_01_bulge_r
-ring_01_side_out_r
-ring_01_side_inn_r
-ring_01_palmMid_r
-ring_metacarpal_slide_r
-thumb_03_pip_r
-thumb_03_in_r
-thumb_03_side_out_r
-thumb_03_side_inn_r
-thumb_03_bulge_r
-thumb_04_r
-thumb_02_mcp_r
-thumb_02_in_r
-thumb_02_side_out_r
-thumb_02_side_inn_r
-thumb_02_bulge_r
-thumb_01_side_out_r
-thumb_01_side_inn_r
-index_03_in_r
-index_02_dip_r
-index_03_bulge_r
-index_04_r
-index_02_side_inn_r
-index_02_side_out_r
-index_02_in_r
-index_02_pip_r
-index_02_bulge_r
-index_01_side_out_r
-index_01_side_inn_r
-index_01_palm_r
-index_01_mcp_r
-index_01_bulge_r
-index_01_palmMid_r
-index_metacarpal_slide_r
-indextoe_01_r
-indextoe_02_r
-bigtoe_01_r
-bigtoe_02_r
-littletoe_01_r
-littletoe_02_r
-middletoe_01_r
-middletoe_02_r
-ringtoe_01_r
-ringtoe_02_r
-indextoe_01_l
-indextoe_02_l
-bigtoe_01_l
-bigtoe_02_l
-ringtoe_01_l
-ringtoe_02_l
-middletoe_01_l
-middletoe_02_l
-littletoe_01_l
-littletoe_02_l
-""".split()
+POLICY_FILE = Path(__file__).with_name("dawnwalker_lod_policies.json")
 
 
-# ============================================================
-# LOD2 BonesToRemove (HFA/HMA)
-# 90 bones
-#
-# Total = 263 bones
-# ============================================================
-
-LOD2_ADDITIONAL = """
-lowerarm_in_l
-lowerarm_out_l
-lowerarm_fwd_l
-lowerarm_bck_l
-middle_03_half_l
-middle_02_half_l
-middle_01_half_l
-pinky_03_half_l
-pinky_02_half_l
-pinky_01_half_l
-ring_03_half_l
-ring_02_half_l
-ring_01_half_l
-thumb_03_half_l
-thumb_02_half_l
-index_03_half_l
-index_02_half_l
-index_01_half_l
-wrist_inner_l
-wrist_outer_l
-upperarm_twistCor_01_l
-upperarm_tricep_l
-upperarm_bicep_l
-upperarm_twistCor_02_l
-upperarm_bck_l
-upperarm_fwd_l
-upperarm_in_l
-upperarm_out_l
-clavicle_out_l
-clavicle_scap_l
-lowerarm_out_r
-lowerarm_in_r
-lowerarm_fwd_r
-lowerarm_bck_r
-middle_03_half_r
-middle_02_half_r
-middle_01_half_r
-pinky_03_half_r
-pinky_02_half_r
-pinky_01_half_r
-ring_03_half_r
-ring_02_half_r
-ring_01_half_r
-thumb_03_half_r
-thumb_02_half_r
-index_03_half_r
-index_02_half_r
-index_01_half_r
-wrist_inner_r
-wrist_outer_r
-upperarm_twistCor_01_r
-upperarm_tricep_r
-upperarm_bicep_r
-upperarm_twistCor_02_r
-upperarm_bck_r
-upperarm_in_r
-upperarm_fwd_r
-upperarm_out_r
-clavicle_out_r
-clavicle_scap_r
-clavicle_pec_r
-spine_04_latissimus_l
-spine_04_latissimus_r
-clavicle_pec_l
-ankle_bck_r
-ankle_fwd_r
-calf_twistCor_02_r
-calf_kneeBack_r
-calf_knee_r
-thigh_twistCor_01_r
-thigh_twistCor_02_r
-thigh_fwd_r
-thigh_bck_r
-thigh_out_r
-thigh_in_r
-thigh_bck_lwr_r
-thigh_fwd_lwr_r
-ankle_bck_l
-ankle_fwd_l
-calf_twistCor_02_l
-calf_kneeBack_l
-calf_knee_l
-thigh_twistCor_01_l
-thigh_twistCor_02_l
-thigh_bck_l
-thigh_fwd_l
-thigh_out_l
-thigh_bck_lwr_l
-thigh_in_l
-thigh_fwd_lwr_l
-""".split()
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON key: {}".format(key))
+        result[key] = value
+    return result
 
 
-# ============================================================
-# LOD3 BonesToRemove (HFA/HMA)
-# 46 bones
-#
-# Total = 309 bones
-# ============================================================
+def validate_policy_data(data):
+    """Expand shared incremental groups before any assets can be modified."""
+    if data.get("schema_version") != 1:
+        raise ValueError("Unsupported policy schema version")
+    groups = data["bone_groups"]
+    policies = data["policies"]
+    if not isinstance(groups, dict) or not isinstance(policies, dict) or not policies:
+        raise ValueError("Expected bone_groups and nonempty policies objects")
+    for group_name, names in groups.items():
+        if not isinstance(names, list) or any(
+            not isinstance(name, str) or not name or name.strip() != name
+            for name in names
+        ):
+            raise ValueError("Invalid bone names in {}".format(group_name))
+        if len({name.casefold() for name in names}) != len(names):
+            raise ValueError("Duplicate bones in {}".format(group_name))
 
-LOD3_ADDITIONAL = """
-lowerarm_twist_02_l
-lowerarm_twist_01_l
-pinky_metacarpal_l
-pinky_01_l
-pinky_02_l
-pinky_03_l
-ring_metacarpal_l
-ring_01_l
-ring_02_l
-ring_03_l
-index_metacarpal_l
-index_01_l
-index_02_l
-index_03_l
-upperarm_twist_01_l
-upperarm_twist_02_l
-upperarm_correctiveRoot_l
-lowerarm_twist_02_r
-lowerarm_twist_01_r
-pinky_metacarpal_r
-pinky_01_r
-pinky_02_r
-pinky_03_r
-ring_metacarpal_r
-ring_01_r
-ring_02_r
-ring_03_r
-index_metacarpal_r
-index_01_r
-index_02_r
-index_03_r
-upperarm_twist_01_r
-upperarm_twist_02_r
-upperarm_correctiveRoot_r
-calf_twist_02_r
-calf_twist_01_r
-calf_correctiveRoot_r
-thigh_twist_01_r
-thigh_twist_02_r
-thigh_correctiveRoot_r
-calf_twist_02_l
-calf_twist_01_l
-calf_correctiveRoot_l
-thigh_twist_01_l
-thigh_twist_02_l
-thigh_correctiveRoot_l
-""".split()
+    expanded = {}
+    aliases_seen = set()
+    for policy_name, settings in policies.items():
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", policy_name):
+            raise ValueError("Invalid policy name: {}".format(policy_name))
+        if not isinstance(settings["label"], str) or not settings["label"]:
+            raise ValueError("Missing label for {}".format(policy_name))
+        aliases = settings["aliases"]
+        if not isinstance(aliases, list) or policy_name not in aliases:
+            raise ValueError("Policy must include its own name as an alias")
+        for alias in aliases:
+            if not isinstance(alias, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", alias):
+                raise ValueError("Invalid alias for {}".format(policy_name))
+            if alias.casefold() in aliases_seen:
+                raise ValueError("Duplicate policy alias: {}".format(alias))
+            aliases_seen.add(alias.casefold())
 
+        for field in ("additional_bone_groups_by_lod", "expected_counts",
+                      "screen_sizes", "max_bones_per_vertex"):
+            if not isinstance(settings[field], list) or len(settings[field]) != TARGET_LOD_COUNT:
+                raise ValueError("{} {} must contain four LODs".format(policy_name, field))
+        if type(settings["regenerate_base_lod"]) is not bool:
+            raise ValueError("regenerate_base_lod must be a boolean")
 
-# ============================================================
-# LOD3 BonesToRemove (HMA)
-#
-# HMA is identical to HFA at LOD1 and LOD2
-# HMA has 11 additional BonesToRemove at LOD3
-#
-# Total = 320 bones
-# ============================================================
-
-HMA_LOD3_ADDITIONAL = """
-belly_01
-belly_02
-belly_03
-clavicle_in_l
-clavicle_in_r
-clavicle_sternum_l
-clavicle_sternum_r
-calf_l_untwist
-calf_r_untwist
-thigh_l_untwist
-thigh_r_untwist
-""".split()
+        names = []
+        expanded[policy_name] = {}
+        previous_screen = float("inf")
+        for lod_index in range(TARGET_LOD_COUNT):
+            refs = settings["additional_bone_groups_by_lod"][lod_index]
+            if not isinstance(refs, list):
+                raise ValueError("Bone group references must be lists")
+            for ref in refs:
+                if not isinstance(ref, str) or ref not in groups:
+                    raise ValueError("Unknown bone group: {}".format(ref))
+                names.extend(groups[ref])
+            if len({name.casefold() for name in names}) != len(names):
+                raise ValueError("{} LOD{} has duplicate bones".format(policy_name, lod_index))
+            expected = settings["expected_counts"][lod_index]
+            if type(expected) is not int or expected < 0 or len(names) != expected:
+                raise ValueError("{} LOD{}: {} bones; expected {}".format(
+                    policy_name, lod_index, len(names), expected))
+            screen = settings["screen_sizes"][lod_index]
+            if type(screen) not in (int, float) or not math.isfinite(screen) or not 0 < screen <= previous_screen:
+                raise ValueError("Invalid screen sizes for {}".format(policy_name))
+            previous_screen = screen
+            influences = settings["max_bones_per_vertex"][lod_index]
+            if type(influences) is not int or not 1 <= influences <= 12:
+                raise ValueError("Invalid influence limit for {}".format(policy_name))
+            # Cumulative expansion guarantees that each LOD is a superset
+            expanded[policy_name][lod_index] = list(names)
+        if bool(expanded[policy_name][0]) != settings["regenerate_base_lod"]:
+            raise ValueError("{}: LOD0 removals require base regeneration".format(policy_name))
+    return expanded, policies
 
 
-# ============================================================
-# BUILD POLICIES
-# ============================================================
-
-HFA_BONES_TO_REMOVE_BY_LOD = {
-    1: list(
-        LOD1_BASE
-    ),
-
-    2: list(
-        LOD1_BASE
-        + LOD2_ADDITIONAL
-    ),
-
-    3: list(
-        LOD1_BASE
-        + LOD2_ADDITIONAL
-        + LOD3_ADDITIONAL
-    ),
-}
+def load_policy_data(path=POLICY_FILE):
+    try:
+        with open(path, encoding="utf-8") as policy_file:
+            data = json.load(policy_file, object_pairs_hook=_unique_json_object)
+        return validate_policy_data(data)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise RuntimeError("Invalid LOD policy file '{}': {}".format(path, exc)) from exc
 
 
-HMA_BONES_TO_REMOVE_BY_LOD = {
-    1: list(
-        LOD1_BASE
-    ),
-
-    2: list(
-        LOD1_BASE
-        + LOD2_ADDITIONAL
-    ),
-
-    3: list(
-        LOD1_BASE
-        + LOD2_ADDITIONAL
-        + LOD3_ADDITIONAL
-        + HMA_LOD3_ADDITIONAL
-    ),
-}
-
-
-BONE_POLICIES = {
-    POLICY_HFA: HFA_BONES_TO_REMOVE_BY_LOD,
-    POLICY_HMA: HMA_BONES_TO_REMOVE_BY_LOD,
-}
-
-
+# Re-read JSON on importlib.reload(), just like the existing Blueprint launcher
+BONE_POLICIES, POLICY_SETTINGS = load_policy_data()
 EXPECTED_BONE_COUNTS = {
-    POLICY_HFA: {
-        1: 173,
-        2: 263,
-        3: 309,
-    },
-
-    POLICY_HMA: {
-        1: 173,
-        2: 263,
-        3: 320,
-    },
+    name: dict(enumerate(settings["expected_counts"]))
+    for name, settings in POLICY_SETTINGS.items()
 }
-
-
-# ============================================================
-# POLICY SANITY CHECKS
-# ============================================================
-
-for policy_name, expected_lods in EXPECTED_BONE_COUNTS.items():
-
-    policy = BONE_POLICIES[
-        policy_name
-    ]
-
-    for lod_index, expected_count in expected_lods.items():
-
-        actual_count = len(
-            policy[lod_index]
-        )
-
-        if actual_count != expected_count:
-
-            raise RuntimeError(
-                (
-                    "Internal policy error: "
-                    "{} LOD{} contains {} bones; "
-                    "expected {}."
-                ).format(
-                    policy_name,
-                    lod_index,
-                    actual_count,
-                    expected_count
-                )
-            )
 
 
 # ============================================================
@@ -582,146 +220,71 @@ def error(message):
 # POLICY DETECTION
 # ============================================================
 
-def asset_name_contains_token(
-    asset_name,
-    token
-):
-    """
-    Matches HFA / HMA as a distinct naming token.
-
-    Matches:
-        SK_HFA_Example_Torso_A
-        HFA_Example
-        Example-HFA-Test
-
-    Does not intentionally match the letters as part of
-    a longer alphanumeric word.
-    """
-
-    pattern = (
-        r"(^|[^A-Za-z0-9])"
-        + re.escape(token)
-        + r"([^A-Za-z0-9]|$)"
-    )
-
-    return (
-        re.search(
-            pattern,
-            asset_name,
-            flags=re.IGNORECASE
-        )
-        is not None
-    )
+def matching_policies(asset_name):
+    """Match distinct aliases, preferring a compound token at the same location."""
+    matches = []
+    for policy_name, settings in POLICY_SETTINGS.items():
+        for alias in settings["aliases"]:
+            pattern = r"(?<![A-Za-z0-9])" + re.escape(alias) + r"(?![A-Za-z0-9])"
+            for match in re.finditer(pattern, asset_name, re.IGNORECASE):
+                matches.append((match.start(), match.end(), policy_name))
+    # BREFIN_B is one policy token, not an ambiguity with BREFIN
+    # Separate tokens elsewhere in the name still cause a real ambiguity
+    found = {
+        name for start, end, name in matches
+        if not any(other_start <= start and end <= other_end
+                   and (other_start, other_end) != (start, end)
+                   for other_start, other_end, _ in matches)
+    }
+    return [name for name in POLICY_SETTINGS if name in found]
 
 
-def prompt_for_policy(mesh):
-    """
-    Fallback if automatic HFA/HMA detection fails.
-
-    YES    = Female / HFA
-    NO     = Male / HMA
-    CANCEL = Skip
-    """
-
-    result = (
-        unreal.EditorDialog.show_message(
+def prompt_for_policy(mesh, candidates=None):
+    """Offer matching families, or all families for an unidentified asset."""
+    choices = candidates or list(POLICY_SETTINGS)
+    if set(choices) == {POLICY_HFA, POLICY_HMA}:
+        # Preserve the existing human-only ambiguity dialog
+        result = unreal.EditorDialog.show_message(
             "Select Skeleton",
-
-            (
-                "Could not automatically detect "
-                "the skeleton for:\n\n"
-                "{}\n\n"
-                "YES = Female (HFA)\n"
-                "NO = Male (HMA)\n"
-                "CANCEL = Skip this mesh"
-            ).format(
-                mesh.get_name()
-            ),
-
+            "Select the skeleton for: {}\n\n"
+            "YES = Female (HFA)\nNO = Male (HMA)\nCANCEL = Skip this mesh".format(mesh.get_name()),
             unreal.AppMsgType.YES_NO_CANCEL,
-
             unreal.AppReturnType.CANCEL
         )
-    )
+        if result == unreal.AppReturnType.YES:
+            return POLICY_HFA
+        if result == unreal.AppReturnType.NO:
+            return POLICY_HMA
+        return None
 
-    if result == unreal.AppReturnType.YES:
-
-        return POLICY_HFA
-
-    if result == unreal.AppReturnType.NO:
-
-        return POLICY_HMA
-
+    for index, policy_name in enumerate(choices):
+        result = unreal.EditorDialog.show_message(
+            "Select Skeleton ({}/{})".format(index + 1, len(choices)),
+            "Asset: {}\n\nUse {} ({})?\n\n"
+            "YES = Use this policy\nNO = {}\nCANCEL = Skip this mesh".format(
+                mesh.get_name(), POLICY_SETTINGS[policy_name]["label"], policy_name,
+                "Next policy" if index + 1 < len(choices) else "Skip this mesh"
+            ),
+            unreal.AppMsgType.YES_NO_CANCEL,
+            unreal.AppReturnType.CANCEL
+        )
+        if result == unreal.AppReturnType.YES:
+            return policy_name
+        if result != unreal.AppReturnType.NO:
+            return None
     return None
 
 
 def detect_policy(mesh):
-    """
-    Detection order:
-
-        HFA only -> HFA
-        HMA only -> HMA
-        neither  -> prompt
-        both     -> prompt
-    """
-
-    asset_name = mesh.get_name()
-
-    has_hfa = asset_name_contains_token(
-        asset_name,
-        POLICY_HFA
-    )
-
-    has_hma = asset_name_contains_token(
-        asset_name,
-        POLICY_HMA
-    )
-
-    if has_hfa and not has_hma:
-
-        log(
-            "{}: automatically detected "
-            "Female (HFA).".format(
-                asset_name
-            )
-        )
-
-        return POLICY_HFA
-
-    if has_hma and not has_hfa:
-
-        log(
-            "{}: automatically detected "
-            "Male (HMA).".format(
-                asset_name
-            )
-        )
-
-        return POLICY_HMA
-
-    if has_hfa and has_hma:
-
-        warn(
-            "{}: name contains both HFA "
-            "and HMA; prompting user."
-            .format(
-                asset_name
-            )
-        )
-
-    else:
-
-        warn(
-            "{}: no HFA/HMA token found; "
-            "prompting user."
-            .format(
-                asset_name
-            )
-        )
-
-    return prompt_for_policy(
-        mesh
-    )
+    candidates = matching_policies(mesh.get_name())
+    if len(candidates) == 1:
+        policy_name = candidates[0]
+        log("{}: automatically detected {} ({}).".format(
+            mesh.get_name(), POLICY_SETTINGS[policy_name]["label"], policy_name))
+        return policy_name
+    warn("{}: {} policy tokens; prompting user.".format(
+        mesh.get_name(), ", ".join(candidates) if candidates else "no recognized"))
+    return prompt_for_policy(mesh, candidates)
 
 
 # ============================================================
@@ -797,7 +360,7 @@ def ensure_required_lods(mesh):
 
             warn(
                 "{}: has {} LODs. "
-                "This tool only manages LOD1-LOD3."
+                "This tool configures LOD0-LOD3."
                 .format(
                     mesh.get_name(),
                     current_count
@@ -896,24 +459,11 @@ def apply_policy_to_lod_info_array(
             )
         )
 
-    # LOD0 keeps its source geometry and reduction settings
-    # Explicitly write the modified struct back, as for LOD1-LOD3
-    lod_info = lod_infos[0]
-    lod_info.set_editor_property(
-        "bones_to_remove",
-        []
-    )
-    lod_info.set_editor_property(
-        "screen_size",
-        unreal.PerPlatformFloat(default=SCREEN_SIZE_BY_LOD[0])
-    )
-    lod_infos[0] = lod_info
+    settings = POLICY_SETTINGS[policy_name]
+    screen_sizes = settings["screen_sizes"]
+    influence_limits = settings["max_bones_per_vertex"]
 
-    for lod_index in (
-        1,
-        2,
-        3
-    ):
+    for lod_index in range(TARGET_LOD_COUNT):
 
         lod_info = (
             lod_infos[
@@ -951,12 +501,17 @@ def apply_policy_to_lod_info_array(
 
             unreal.PerPlatformFloat(
                 default=(
-                    SCREEN_SIZE_BY_LOD[
+                    screen_sizes[
                         lod_index
                     ]
                 )
             )
         )
+
+        if lod_index == 0 and not settings["regenerate_base_lod"]:
+            # Preserve ordinary LOD0 geometry and reduction settings
+            lod_infos[lod_index] = lod_info
+            continue
 
         # ----------------------------------------------------
         # Reduction Settings
@@ -1027,7 +582,7 @@ def apply_policy_to_lod_info_array(
 
         reduction.set_editor_property(
             "max_bones_per_vertex",
-            MAX_BONES_PER_VERTEX_BY_LOD[
+            influence_limits[
                 lod_index
             ]
         )
@@ -1062,10 +617,10 @@ def apply_policy_to_lod_info_array(
                 lod_index,
                 policy_name,
                 len(bone_refs),
-                SCREEN_SIZE_BY_LOD[
+                screen_sizes[
                     lod_index
                 ],
-                MAX_BONES_PER_VERTEX_BY_LOD[
+                influence_limits[
                     lod_index
                 ]
             )
@@ -1094,7 +649,7 @@ def verify_bones_to_remove(
     Unreal actually stored the expected array.
     """
 
-    expected_names = [] if lod_index == 0 else (
+    expected_names = (
         BONE_POLICIES[
             policy_name
         ][
@@ -1276,7 +831,7 @@ def process_mesh(mesh):
     )
 
     # --------------------------------------------------------
-    # 1. Detect Female / Male policy
+    # 1. Detect skeleton policy
     # --------------------------------------------------------
 
     policy_name = detect_policy(
@@ -1407,7 +962,7 @@ def process_mesh(mesh):
     # 7. Regenerate generated LODs
     #
     # new_lod_count = 0 (keep current number of LODs)
-    # generate_base_lod = False (do not regenerate LOD0 geometry)
+    # Only policies with explicit LOD0 removals rebuild the base (PXA)
     # --------------------------------------------------------
 
     log(
@@ -1417,13 +972,18 @@ def process_mesh(mesh):
         )
     )
 
+    regenerate_base_lod = POLICY_SETTINGS[policy_name]["regenerate_base_lod"]
+    if regenerate_base_lod:
+        log("{}: rebuilding LOD0 at 100% geometry retention for {} bone removals.".format(
+            asset_name, len(BONE_POLICIES[policy_name][0])))
+
     regeneration_success = (
         unreal.SkeletalMeshEditorSubsystem
         .regenerate_lod(
             mesh,
             0,
             REGENERATE_IMPORTED_LODS,
-            False
+            regenerate_base_lod
         )
     )
 
