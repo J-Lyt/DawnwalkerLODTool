@@ -60,6 +60,14 @@ MAX_BONES_PER_VERTEX_BY_LOD = {
     3: 4,
 }
 
+# Geometry targets are relative to LOD0 (base_lod = 0)
+# Explicit targets keep repeated runs from shifting reduction again
+GEOMETRY_RETENTION_BY_LOD = {
+    1: 1.0,
+    2: 0.5,
+    3: 0.25,
+}
+
 # False: Only LODs that have been auto-generated previously are regenerated
 # True : Imported LODs may also be regenerated
 REGENERATE_IMPORTED_LODS = False
@@ -971,6 +979,50 @@ def apply_policy_to_lod_info_array(
         reduction.set_editor_property(
             "base_lod",
             0
+        )
+
+        # Geometry reduction is independent of each LOD's bone policy
+        geometry_retention = GEOMETRY_RETENTION_BY_LOD[lod_index]
+
+        reduction.set_editor_property(
+            "termination_criterion",
+            unreal.SkeletalMeshTerminationCriterion.SMTC_NUM_OF_TRIANGLES
+        )
+
+        reduction.set_editor_property(
+            "reduction_method",
+            unreal.SkeletalMeshOptimizationType.SMOT_NUM_OF_TRIANGLES
+        )
+
+        reduction.set_editor_property(
+            "num_of_triangles_percentage",
+            geometry_retention
+        )
+
+        reduction.set_editor_property(
+            "num_of_vert_percentage",
+            geometry_retention
+        )
+
+        # Percentage criteria also have absolute count caps
+        # Use the uint32 maximum so old caps cannot override the targets
+        reduction.set_editor_property(
+            "max_num_of_triangles_percentage",
+            0xFFFFFFFF
+        )
+
+        reduction.set_editor_property(
+            "max_num_of_verts_percentage",
+            0xFFFFFFFF
+        )
+
+        log(
+            "{} LOD{}: configured to retain {:g}% of LOD0 triangles "
+            "when regenerated.".format(
+                mesh.get_name(),
+                lod_index,
+                geometry_retention * 100
+            )
         )
 
         reduction.set_editor_property(
